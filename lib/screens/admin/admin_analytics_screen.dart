@@ -1,226 +1,110 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../services/api_client.dart';
 import '../../widgets/admin_nav.dart';
 
-class AdminAnalyticsScreen extends StatelessWidget {
+class AdminAnalyticsScreen extends StatefulWidget {
   const AdminAnalyticsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final kpis = [
-      {
-        'label': 'Platform Revenue',
-        'val': '56K',
-        'trend': '↑ 18% vs Mar',
-        'up': true,
-        'color': AppColors.purple,
-      },
-      {
-        'label': 'Total Bookings',
-        'val': '248',
-        'trend': '↑ 31 new',
-        'up': true,
-        'color': AppColors.cyan,
-      },
-      {
-        'label': 'Active Users',
-        'val': '1,840',
-        'trend': '↑ 340 new',
-        'up': true,
-        'color': AppColors.textPrimary,
-      },
-      {
-        'label': 'Pending Review',
-        'val': '12',
-        'trend': 'Needs action',
-        'up': null,
-        'color': AppColors.warning,
-      },
-    ];
+  State<AdminAnalyticsScreen> createState() => _AdminAnalyticsScreenState();
+}
 
-    final months = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'];
-    final heights = [18.0, 26.0, 20.0, 32.0, 28.0, 44.0];
+class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
+  Map<String, dynamic>? _stats;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await AdminApi.getStats();
+      final data = res['data'] as Map<String, dynamic>? ?? res;
+      if (mounted) setState(() { _stats = data; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _stats ?? {};
+    final revenue = s['revenue_this_month'] ?? s['paid_revenue'] ?? 0;
+    final bookings = s['total_bookings'] ?? 0;
+    final users = s['verified_users'] ?? s['new_users_this_month'] ?? 0;
+    final pending = s['pending_listings'] ?? 0;
+    final growth = s['revenue_growth'] ?? 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
         child: Column(
           children: [
-            const AdminHeader(rightText: 'Apr 2026'),
+            const AdminHeader(rightText: 'Analytics'),
             const AdminTopNav(currentIndex: 0),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // KPI grid
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: 6,
-                      mainAxisSpacing: 6,
-                      childAspectRatio: 2.0,
-                      children: kpis
-                          .map((k) => Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: AppColors.bgCard,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: AppColors.borderLight,
-                                      width: 0.5),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                  children: [
-                                    Text(k['label'] as String,
-                                        style: GoogleFonts.dmSans(
-                                            fontSize: 9,
-                                            color: AppColors.textMuted)),
-                                    Text(
-                                      k['val'] as String,
-                                      style: GoogleFonts.syne(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w700,
-                                        color: k['color'] as Color,
-                                      ),
-                                    ),
-                                    Text(
-                                      k['trend'] as String,
-                                      style: GoogleFonts.dmSans(
-                                        fontSize: 8,
-                                        color: k['up'] == null
-                                            ? AppColors.textMuted
-                                            : (k['up'] as bool)
-                                                ? AppColors.success
-                                                : AppColors.error,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ))
-                          .toList(),
-                    ),
-                    const SizedBox(height: 12),
-                    _sectionLabel('Monthly Revenue (PKR 000s)'),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: SizedBox(
-                        height: 60,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: List.generate(6, (i) {
-                            final isLast = i == 5;
-                            final isFeb = i == 3;
-                            return Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.purple, strokeWidth: 2))
+                  : RefreshIndicator(
+                      color: AppColors.purple,
+                      backgroundColor: AppColors.bgCard,
+                      onRefresh: _load,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            GridView.count(
+                              crossAxisCount: 2,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisSpacing: 6,
+                              mainAxisSpacing: 6,
+                              childAspectRatio: 2.0,
+                              children: [
+                                _kpi('Platform Revenue', 'PKR ${_fmt(revenue)}',
+                                    trend: growth != 0 ? '${growth > 0 ? '↑' : '↓'} ${growth.abs()}% vs last month' : null,
+                                    up: growth >= 0, color: AppColors.purple),
+                                _kpi('Total Bookings', '$bookings',
+                                    trend: 'All time', color: AppColors.cyan),
+                                _kpi('Verified Users', '$users',
+                                    trend: 'Verified', color: AppColors.textPrimary),
+                                _kpi('Pending Listings', '$pending',
+                                    trend: pending > 0 ? 'Needs action' : 'All clear',
+                                    up: pending == 0, color: AppColors.warning),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            _sectionLabel('Quick Actions'),
+                            const SizedBox(height: 6),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: AppColors.bgCard,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.borderLight, width: 0.5),
+                              ),
                               child: Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
-                                  Flexible(
-                                    child: Container(
-                                      height: heights[i],
-                                      margin: const EdgeInsets.symmetric(
-                                          horizontal: 2),
-                                      decoration: BoxDecoration(
-                                        color: isLast
-                                            ? AppColors.purple
-                                                .withOpacity(0.5)
-                                            : isFeb
-                                                ? AppColors.cyan
-                                                    .withOpacity(0.3)
-                                                : AppColors.purple
-                                                    .withOpacity(0.3),
-                                        borderRadius:
-                                            const BorderRadius.vertical(
-                                          top: Radius.circular(2),
-                                        ),
-                                        border: Border(
-                                          top: BorderSide(
-                                            color: isLast
-                                                ? AppColors.purple
-                                                : isFeb
-                                                    ? AppColors.cyan
-                                                    : AppColors.purple,
-                                            width: 1.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(months[i],
-                                      style: GoogleFonts.dmSans(
-                                          fontSize: 8,
-                                          color: AppColors.textMuted)),
+                                  _quickAction(context, '📋', 'Pending Listings', '$pending awaiting approval',
+                                      AppColors.warning, '/admin/listings'),
+                                  _quickAction(context, '👥', 'Manage Users', 'Verify & manage accounts',
+                                      AppColors.cyan, '/admin/users'),
+                                  _quickAction(context, '💳', 'Payouts', 'View payment records',
+                                      AppColors.success, '/admin/payouts', isLast: true),
                                 ],
                               ),
-                            );
-                          }),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _sectionLabel('Quick Actions'),
-                    const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: Column(
-                        children: [
-                          _quickAction(
-                            context,
-                            '📋',
-                            const Color(0xFF1A1408),
-                            'Pending Listings',
-                            '12 awaiting approval',
-                            '12',
-                            AppColors.warning,
-                            '/admin/listings',
-                          ),
-                          _quickAction(
-                            context,
-                            '🚩',
-                            const Color(0xFF1A0808),
-                            'Open Reports',
-                            '5 disputes need review',
-                            '5',
-                            AppColors.error,
-                            '/admin/reports',
-                          ),
-                          _quickAction(
-                            context,
-                            '💳',
-                            const Color(0xFF0D1520),
-                            'Pending Payouts',
-                            'PKR 124,500 to process',
-                            '3',
-                            AppColors.cyan,
-                            null,
-                            isLast: true,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
             const AdminBottomNav(currentIndex: 1),
           ],
@@ -229,92 +113,67 @@ class AdminAnalyticsScreen extends StatelessWidget {
     );
   }
 
-  Widget _sectionLabel(String label) {
-    return Text(
-      label.toUpperCase(),
-      style: GoogleFonts.dmSans(
-        fontSize: 9,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textMuted,
-        letterSpacing: 0.8,
+  Widget _kpi(String label, String val, {String? trend, bool? up, Color color = AppColors.textPrimary}) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.borderLight, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.textMuted)),
+          Text(val, style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w700, color: color)),
+          if (trend != null)
+            Text(trend, style: GoogleFonts.dmSans(fontSize: 8,
+                color: up == null ? AppColors.textMuted : up ? AppColors.success : AppColors.error)),
+        ],
       ),
     );
   }
 
-  Widget _quickAction(
-    BuildContext context,
-    String emoji,
-    Color bgColor,
-    String title,
-    String sub,
-    String badge,
-    Color badgeColor,
-    String? route, {
-    bool isLast = false,
-  }) {
+  Widget _sectionLabel(String label) => Text(label.toUpperCase(),
+      style: GoogleFonts.dmSans(fontSize: 9, fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 0.8));
+
+  Widget _quickAction(BuildContext context, String icon, String title, String sub, Color color, String route, {bool isLast = false}) {
     return GestureDetector(
-      onTap: () {
-        if (route != null) Navigator.pushNamed(context, route);
-      },
+      onTap: () => Navigator.pushNamed(context, route),
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          border: isLast
-              ? null
-              : const Border(
-                  bottom: BorderSide(
-                      color: AppColors.borderLight, width: 0.5)),
+          border: isLast ? null : const Border(bottom: BorderSide(color: AppColors.borderLight, width: 0.5)),
         ),
         child: Row(
           children: [
             Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Center(
-                  child: Text(emoji, style: const TextStyle(fontSize: 14))),
+              width: 28, height: 28,
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
+              child: Center(child: Text(icon, style: const TextStyle(fontSize: 14))),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title,
-                      style: GoogleFonts.dmSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      )),
-                  Text(sub,
-                      style: GoogleFonts.dmSans(
-                          fontSize: 9, color: AppColors.textMuted)),
+                  Text(title, style: GoogleFonts.dmSans(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                  Text(sub, style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.textMuted)),
                 ],
               ),
             ),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: badgeColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: badgeColor.withOpacity(0.25), width: 0.5),
-              ),
-              child: Text(
-                badge,
-                style: GoogleFonts.dmSans(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  color: badgeColor,
-                ),
-              ),
-            ),
+            const Icon(Icons.chevron_right, size: 16, color: AppColors.textMuted),
           ],
         ),
       ),
     );
+  }
+
+  String _fmt(dynamic v) {
+    final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0;
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return n.toStringAsFixed(0);
   }
 }

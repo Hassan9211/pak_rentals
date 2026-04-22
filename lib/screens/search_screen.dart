@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
 import '../models/listing.dart';
+import '../services/api_client.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/listing_card.dart';
 
@@ -18,25 +19,22 @@ class _SearchScreenState extends State<SearchScreen> {
 
   int _activeFilter = 0;
   String _query = '';
+  List<Listing> _results = [];
+  int _total = 0;
+  bool _loading = false;
 
-  final List<String> _filters = ['All', 'Properties', 'Vehicles', 'Shadi Wear', 'Under 10K'];
-
-  // Map filter label → category field value (empty = all)
-  static const Map<String, String> _filterMap = {
-    'All': '',
-    'Properties': 'Properties',
-    'Vehicles': 'Vehicles',
-    'Shadi Wear': 'Shadi Wear',
-    'Under 10K': '__price__',
+  final List<String> _filters = ['All', 'Properties', 'Vehicles', 'Shadi Wear'];
+  static const Map<String, String?> _filterMap = {
+    'All': null,
+    'Properties': 'properties',
+    'Vehicles': 'vehicles',
+    'Shadi Wear': 'shadi-wear',
   };
 
   @override
   void initState() {
     super.initState();
-    _searchCtrl.addListener(() {
-      setState(() => _query = _searchCtrl.text.toLowerCase().trim());
-    });
-    // Auto-focus search bar when screen opens
+    _search();
     WidgetsBinding.instance.addPostFrameCallback((_) => _focusNode.requestFocus());
   }
 
@@ -47,41 +45,30 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  List<Listing> get _filtered {
-    final filterLabel = _filters[_activeFilter];
-    final catFilter = _filterMap[filterLabel] ?? '';
-
-    return SampleData.searchResults.where((l) {
-      // Text search — title, location, category
-      final matchesQuery = _query.isEmpty ||
-          l.title.toLowerCase().contains(_query) ||
-          l.location.toLowerCase().contains(_query) ||
-          l.category.toLowerCase().contains(_query);
-
-      // Category / price filter
-      bool matchesCat = true;
-      if (catFilter == '__price__') {
-        // Parse price — handles "25,000", "800", "15K", "25K"
-        final raw = l.price.replaceAll(',', '').replaceAll(' ', '');
-        double price = 0;
-        if (raw.toUpperCase().endsWith('K')) {
-          price = (double.tryParse(raw.substring(0, raw.length - 1)) ?? 0) * 1000;
-        } else {
-          price = double.tryParse(raw) ?? 0;
-        }
-        matchesCat = price < 10000;
-      } else if (catFilter.isNotEmpty) {
-        matchesCat = l.category.toLowerCase() == catFilter.toLowerCase();
+  Future<void> _search() async {
+    setState(() => _loading = true);
+    try {
+      final category = _filterMap[_filters[_activeFilter]];
+      final res = await ListingsApi.getAll(
+        q: _query.isEmpty ? null : _query,
+        category: category,
+      );
+      final list = res['data'] as List? ?? [];
+      final meta = res['meta'] as Map<String, dynamic>? ?? {};
+      if (mounted) {
+        setState(() {
+          _results = list.map((e) => Listing.fromJson(e as Map<String, dynamic>)).toList();
+          _total = meta['total'] as int? ?? _results.length;
+          _loading = false;
+        });
       }
-
-      return matchesQuery && matchesCat;
-    }).toList();
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final results = _filtered;
-
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
@@ -89,40 +76,34 @@ class _SearchScreenState extends State<SearchScreen> {
           children: [
             _buildHeader(),
             _buildFilterChips(),
-            // Result count
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
                   Text(
-                    '${results.length} listing${results.length == 1 ? '' : 's'} found',
+                    _loading ? 'Searching...' : '$_total listing${_total == 1 ? '' : 's'} found',
                     style: GoogleFonts.dmSans(fontSize: 11, color: AppColors.textMuted),
                   ),
                   if (_query.isNotEmpty) ...[
                     const SizedBox(width: 6),
-                    Text(
-                      '· "$_query"',
-                      style: GoogleFonts.dmSans(fontSize: 11, color: AppColors.cyan),
-                    ),
+                    Text('· "$_query"', style: GoogleFonts.dmSans(fontSize: 11, color: AppColors.cyan)),
                   ],
                 ],
               ),
             ),
             Expanded(
-              child: results.isEmpty
-                  ? _buildEmpty()
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: results.length,
-                      itemBuilder: (context, i) => ListingListItem(
-                        listing: results[i],
-                        onTap: () => Navigator.pushNamed(
-                          context,
-                          '/listing-detail',
-                          arguments: results[i],
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.cyan, strokeWidth: 2))
+                  : _results.isEmpty
+                      ? _buildEmpty()
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _results.length,
+                          itemBuilder: (context, i) => ListingListItem(
+                            listing: _results[i],
+                            onTap: () => Navigator.pushNamed(context, '/listing-detail', arguments: _results[i]),
+                          ),
                         ),
-                      ),
-                    ),
             ),
             AppBottomNav(currentIndex: 1),
           ],
@@ -167,6 +148,13 @@ class _SearchScreenState extends State<SearchScreen> {
                         contentPadding: const EdgeInsets.symmetric(vertical: 11),
                         isDense: true,
                       ),
+                      onChanged: (v) {
+                        setState(() => _query = v.trim());
+                        Future.delayed(const Duration(milliseconds: 500), () {
+                          if (_query == v.trim()) _search();
+                        });
+                      },
+                      onSubmitted: (_) => _search(),
                     ),
                   ),
                   if (_query.isNotEmpty)
@@ -174,6 +162,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       onTap: () {
                         _searchCtrl.clear();
                         setState(() => _query = '');
+                        _search();
                       },
                       child: const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 10),
@@ -183,16 +172,6 @@ class _SearchScreenState extends State<SearchScreen> {
                 ],
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.cyan.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.cyan.withValues(alpha: 0.2), width: 0.5),
-            ),
-            child: const Center(child: Icon(Icons.tune, size: 16, color: AppColors.cyan)),
           ),
         ],
       ),
@@ -215,7 +194,10 @@ class _SearchScreenState extends State<SearchScreen> {
             final label = entry.value;
             final isActive = i == _activeFilter;
             return GestureDetector(
-              onTap: () => setState(() => _activeFilter = i),
+              onTap: () {
+                setState(() => _activeFilter = i);
+                _search();
+              },
               child: Container(
                 margin: const EdgeInsets.only(right: 6),
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -227,14 +209,11 @@ class _SearchScreenState extends State<SearchScreen> {
                     width: 0.5,
                   ),
                 ),
-                child: Text(
-                  label,
-                  style: GoogleFonts.dmSans(
-                    fontSize: 11,
-                    color: isActive ? AppColors.cyan : AppColors.textSecondary,
-                    fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                ),
+                child: Text(label,
+                    style: GoogleFonts.dmSans(
+                        fontSize: 11,
+                        color: isActive ? AppColors.cyan : AppColors.textSecondary,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal)),
               ),
             );
           }).toList(),
@@ -250,24 +229,18 @@ class _SearchScreenState extends State<SearchScreen> {
         children: [
           const Text('🔍', style: TextStyle(fontSize: 48)),
           const SizedBox(height: 14),
-          Text(
-            _query.isNotEmpty ? 'No results for "$_query"' : 'No listings found',
-            style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-          ),
+          Text(_query.isNotEmpty ? 'No results for "$_query"' : 'No listings found',
+              style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
           const SizedBox(height: 6),
-          Text(
-            'Try a different keyword or filter',
-            style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted),
-          ),
+          Text('Try a different keyword or filter',
+              style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)),
           if (_query.isNotEmpty || _activeFilter != 0) ...[
             const SizedBox(height: 20),
             GestureDetector(
               onTap: () {
                 _searchCtrl.clear();
-                setState(() {
-                  _query = '';
-                  _activeFilter = 0;
-                });
+                setState(() { _query = ''; _activeFilter = 0; });
+                _search();
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),

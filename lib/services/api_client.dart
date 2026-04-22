@@ -8,15 +8,34 @@ import '../core/constants.dart';
 //  PakRentals — Central API Client
 //  Aligned with Laravel api.php (Sanctum auth)
 //
-//  Base URL : AppConstants.apiBaseUrl  →  https://your-domain.com/api
+//  Backend response format:
+//    { "data": { "token": "...", "user": {...} }, "message": "..." }
+//    OR flat: { "token": "...", "user": {...} }
+//  Both formats handled automatically.
 //
-//  Usage:
-//    final res = await AuthApi.login(email: '...', password: '...');
-//    final res = await ListingsApi.getAll(city: 'Bahawalpur');
-//
-//  Token is stored in SharedPreferences and sent automatically.
-//  Throws ApiException on non-2xx responses.
+//  Image paths from backend are storage paths (e.g. "listings/abc.jpg").
+//  Use StorageHelper.url(path) to get the full URL.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── Storage URL helper ─────────────────────────────────────────────────────
+class StorageHelper {
+  /// Converts a Laravel storage path to a full public URL.
+  /// e.g. "listings/abc.jpg" → "https://your-domain.com/storage/listings/abc.jpg"
+  /// Already-full URLs are returned as-is.
+  static String url(String? path) {
+    if (path == null || path.isEmpty) return '';
+    if (path.startsWith('http')) return path;
+    final base = AppConstants.storageBaseUrl.replaceAll(RegExp(r'/$'), '');
+    final p = path.replaceAll(RegExp(r'^/'), '');
+    return '$base/$p';
+  }
+
+  /// Convert a list of storage paths to full URLs.
+  static List<String> urls(List<dynamic>? paths) {
+    if (paths == null) return [];
+    return paths.map((p) => url(p?.toString())).where((u) => u.isNotEmpty).toList();
+  }
+}
 
 // ── Exception ──────────────────────────────────────────────────────────────
 class ApiException implements Exception {
@@ -75,6 +94,11 @@ class ApiClient {
   }
 
   // ── Response handler ──
+  // Backend returns two formats:
+  //   1. { "data": {...}, "message": "..." }          ← most endpoints
+  //   2. { "data": [...], "meta": {...} }              ← paginated lists
+  //   3. { "token": "...", "user": {...} }             ← auth (flat)
+  // All handled here — just use res['data'] in callers.
   static Map<String, dynamic> _handle(http.Response res) {
     Map<String, dynamic> body = {};
     try {
@@ -84,9 +108,9 @@ class ApiClient {
     }
     if (res.statusCode >= 200 && res.statusCode < 300) return body;
 
-    // 401 — token expired or invalid → clear stored token
+    // 401 — token expired → clear it so app can re-login
     if (res.statusCode == 401) {
-      clearToken(); // fire-and-forget, no await needed here
+      clearToken();
     }
 
     throw ApiException(
@@ -188,6 +212,34 @@ class ApiClient {
 //  AUTH  —  /api/register  /api/login  /api/logout  /api/user
 // ═══════════════════════════════════════════════════════════════════════════
 class AuthApi {
+  /// Extract token from backend response.
+  /// Backend returns: { "data": { "token": "...", "user": {...} }, "message": "..." }
+  /// Fallback: flat { "token": "..." }
+  static String? _extractToken(Map<String, dynamic> res) {
+    // Try nested: res['data']['token']
+    final data = res['data'];
+    if (data is Map<String, dynamic>) {
+      final t = data['token'];
+      if (t is String && t.isNotEmpty) return t;
+    }
+    // Try flat: res['token']
+    final t = res['token'];
+    if (t is String && t.isNotEmpty) return t;
+    return null;
+  }
+
+  /// Extract user from backend response.
+  static Map<String, dynamic>? extractUser(Map<String, dynamic> res) {
+    final data = res['data'];
+    if (data is Map<String, dynamic>) {
+      final u = data['user'];
+      if (u is Map<String, dynamic>) return u;
+    }
+    final u = res['user'];
+    if (u is Map<String, dynamic>) return u;
+    return null;
+  }
+
   /// POST /api/register
   /// Note: backend does not accept 'role' — all users register as 'user'.
   /// Admin/moderator roles assigned later via /api/admin/users/:id/role
@@ -196,16 +248,20 @@ class AuthApi {
     required String email,
     required String password,
     String? phone,
+    String? city,
+    String? tehsil,
+    String? cnic,
   }) async {
     final res = await ApiClient.post('/register', body: {
       'name': name,
       'email': email,
       'password': password,
-      if (phone != null) 'phone': phone,
-      // 'role' intentionally omitted — backend ignores it
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (city != null && city.isNotEmpty) 'city': city,
+      if (tehsil != null && tehsil.isNotEmpty) 'location_tehsil': tehsil,
+      if (cnic != null && cnic.isNotEmpty) 'cnic': cnic,
     }, auth: false);
-    final token = res['token'] as String?
-        ?? (res['data'] as Map<String, dynamic>?)?['token'] as String?;
+    final token = _extractToken(res);
     if (token != null) await ApiClient.saveToken(token);
     return res;
   }
@@ -219,8 +275,7 @@ class AuthApi {
       'email': email,
       'password': password,
     }, auth: false);
-    final token = res['token'] as String?
-        ?? (res['data'] as Map<String, dynamic>?)?['token'] as String?;
+    final token = _extractToken(res);
     if (token != null) await ApiClient.saveToken(token);
     return res;
   }
@@ -494,11 +549,13 @@ class BookingsApi {
 // ═══════════════════════════════════════════════════════════════════════════
 class HandoverApi {
   /// GET /api/bookings/:id/handover
-  /// Returns:
+  /// Backend returns:
   /// {
-  ///   pickup: [ ...HandoverProof objects ],
-  ///   return: [ ...HandoverProof objects ],
-  ///   all_submitted: bool
+  ///   data: {
+  ///     pickup: { host: HandoverProof|null, renter: HandoverProof|null },
+  ///     return: { host: HandoverProof|null, renter: HandoverProof|null },
+  ///     all_submitted: bool   (true when proofs.count >= 4)
+  ///   }
   /// }
   static Future<Map<String, dynamic>> getProofs(String bookingId) async {
     return ApiClient.get('/bookings/$bookingId/handover');
@@ -610,9 +667,10 @@ class NotificationsApi {
 class ReportsApi {
   /// POST /api/reports
   /// type: booking_dispute | listing_issue | payment_issue | fraud | other
+  /// Backend field: 'subject' (not 'title')
   static Future<Map<String, dynamic>> create({
     required String type,
-    required String subject,
+    required String subject,   // maps to backend 'subject' field
     required String description,
     String? bookingId,
     String? listingId,
@@ -711,11 +769,12 @@ class AdminApi {
 
   /// POST /api/admin/reports/:id/status
   /// status: under_review | resolved | rejected
+  /// Backend field: 'admin_note' (not 'note')
   static Future<void> updateReportStatus(String id, String status,
-      {String? note}) async {
+      {String? adminNote}) async {
     await ApiClient.post('/admin/reports/$id/status', body: {
       'status': status,
-      if (note != null) 'note': note,
+      if (adminNote != null) 'admin_note': adminNote,
     });
   }
 }

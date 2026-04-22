@@ -1,43 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
+import '../services/api_client.dart';
 import '../services/user_state.dart';
 import '../widgets/common_widgets.dart';
-
-// ── Message model ──
-class _Msg {
-  final String text;
-  final bool isMe;
-  final DateTime time;
-
-  _Msg({required this.text, required this.isMe, required this.time});
-}
-
-// ── Conversation model ──
-class _Conv {
-  final String id;
-  final String initials;
-  final List<Color> colors;
-  final String name;
-  final String role;
-  bool isOnline;
-  List<_Msg> messages;
-  int unread;
-
-  _Conv({
-    required this.id,
-    required this.initials,
-    required this.colors,
-    required this.name,
-    required this.role,
-    this.isOnline = false,
-    required this.messages,
-    this.unread = 0,
-  });
-
-  String get lastMsg => messages.isEmpty ? '' : messages.last.text;
-  DateTime get lastTime => messages.isEmpty ? DateTime.now() : messages.last.time;
-}
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -47,72 +13,21 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  _Conv? _activeConv;
+  List<Map<String, dynamic>> _conversations = [];
+  Map<String, dynamic>? _activeConv;
+  List<Map<String, dynamic>> _messages = [];
+
+  bool _loadingConvs = true;
+  bool _loadingMsgs = false;
+
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
-  bool _isTyping = false; // simulated "other person typing"
-
-  late List<_Conv> _conversations;
 
   @override
   void initState() {
     super.initState();
-    _conversations = [
-      _Conv(
-        id: 'c1',
-        initials: 'AK',
-        colors: [AppColors.cyan, AppColors.purple],
-        name: 'Ahmed Khan',
-        role: 'Host · 3-Bed House',
-        isOnline: true,
-        unread: 1,
-        messages: [
-          _Msg(text: 'Hello! Is the house still available from May 8th?', isMe: false, time: _t(10, 32)),
-          _Msg(text: "Yes! It's available from May 8-14. Would you like to visit?", isMe: true, time: _t(10, 35)),
-          _Msg(text: 'Yes please. Also is parking included?', isMe: false, time: _t(10, 37)),
-          _Msg(text: 'Yes, parking is available for 2 cars at no extra cost.', isMe: true, time: _t(10, 38)),
-        ],
-      ),
-      _Conv(
-        id: 'c2',
-        initials: 'FB',
-        colors: [AppColors.pink, AppColors.purple],
-        name: 'Fatima Bibi',
-        role: 'Shadi Wear',
-        isOnline: false,
-        unread: 1,
-        messages: [
-          _Msg(text: 'Is the bridal lehenga available for June 15?', isMe: true, time: _t(9, 0)),
-          _Msg(text: 'The lehenga is available on your dates', isMe: false, time: _t(9, 5)),
-        ],
-      ),
-      _Conv(
-        id: 'c3',
-        initials: 'UM',
-        colors: [const Color(0xFF378ADD), AppColors.cyan],
-        name: 'Usman Malik',
-        role: 'Vehicles',
-        isOnline: false,
-        unread: 0,
-        messages: [
-          _Msg(text: 'I am returning the bike now', isMe: true, time: _t(15, 0)),
-          _Msg(text: 'The bike has been returned, thanks!', isMe: false, time: _t(15, 10)),
-        ],
-      ),
-      _Conv(
-        id: 'c4',
-        initials: 'ZA',
-        colors: [AppColors.warning, AppColors.pink],
-        name: 'Zara Abbasi',
-        role: 'Property',
-        isOnline: true,
-        unread: 0,
-        messages: [
-          _Msg(text: 'Can I visit the room tomorrow?', isMe: false, time: _t(11, 0)),
-        ],
-      ),
-    ];
+    _loadConversations();
   }
 
   @override
@@ -123,62 +38,87 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  DateTime _t(int h, int m) {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day, h, m);
+  Future<void> _loadConversations() async {
+    setState(() => _loadingConvs = true);
+    try {
+      final res = await MessagesApi.getConversations();
+      final list = res['data'] as List? ?? [];
+      if (mounted) {
+        setState(() {
+          _conversations = list.cast<Map<String, dynamic>>();
+          _loadingConvs = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingConvs = false);
+    }
   }
 
-  void _sendMessage() {
+  Future<void> _openConversation(Map<String, dynamic> conv) async {
+    setState(() { _activeConv = conv; _loadingMsgs = true; _messages = []; });
+
+    try {
+      final listingId = (conv['listing']?['id'] ?? conv['listing_id'])?.toString() ?? '';
+      final contactId = (conv['contact']?['id'])?.toString() ?? '';
+      if (listingId.isNotEmpty && contactId.isNotEmpty) {
+        final res = await MessagesApi.getThread(listingId, contactId);
+        final list = res['data'] as List? ?? [];
+        if (mounted) {
+          setState(() {
+            _messages = list.cast<Map<String, dynamic>>();
+            _loadingMsgs = false;
+          });
+          _scrollToBottom();
+        }
+      } else {
+        if (mounted) setState(() => _loadingMsgs = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingMsgs = false);
+    }
+  }
+
+  Future<void> _sendMessage() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || _activeConv == null) return;
 
+    final myId = UserState().email; // used as sender identifier
+    final listingId = (_activeConv!['listing']?['id'] ?? _activeConv!['listing_id'])?.toString() ?? '';
+    final receiverId = (_activeConv!['contact']?['id'])?.toString() ?? '';
+
+    // Optimistic UI — add message immediately
+    final optimistic = {
+      'message': text,
+      'sender_id': myId,
+      'sent_at': DateTime.now().toIso8601String(),
+      '_isMe': true,
+    };
     setState(() {
-      _activeConv!.messages.add(_Msg(
-        text: text,
-        isMe: true,
-        time: DateTime.now(),
-      ));
-      // Update unread in conversation list
-      _activeConv!.unread = 0;
+      _messages.add(optimistic);
       _msgCtrl.clear();
     });
-
     _scrollToBottom();
 
-    // Simulate reply after 1.5s
-    setState(() => _isTyping = true);
-    Future.delayed(const Duration(milliseconds: 1500), () {
-      if (!mounted) return;
-      setState(() {
-        _isTyping = false;
-        _activeConv!.messages.add(_Msg(
-          text: _autoReply(text),
-          isMe: false,
-          time: DateTime.now(),
+    try {
+      await MessagesApi.send(
+        receiverId: receiverId,
+        listingId: listingId,
+        message: text,
+      );
+      // Reload to get server message with real ID
+      if (_activeConv != null) _openConversation(_activeConv!);
+    } catch (_) {
+      // Remove optimistic message on failure
+      if (mounted) {
+        setState(() => _messages.remove(optimistic));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to send message', style: GoogleFonts.dmSans(fontSize: 13, color: Colors.white)),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
         ));
-      });
-      _scrollToBottom();
-    });
-  }
-
-  String _autoReply(String msg) {
-    final lower = msg.toLowerCase();
-    if (lower.contains('price') || lower.contains('cost') || lower.contains('kitna')) {
-      return 'The price is as listed. Feel free to negotiate if booking for longer duration!';
+      }
     }
-    if (lower.contains('available') || lower.contains('book')) {
-      return 'Yes, it is available! You can go ahead and book it.';
-    }
-    if (lower.contains('visit') || lower.contains('see') || lower.contains('dekh')) {
-      return 'Sure! You can visit anytime between 10 AM – 6 PM. Just let me know.';
-    }
-    if (lower.contains('thank') || lower.contains('shukriya')) {
-      return 'You are welcome! 😊';
-    }
-    if (lower.contains('hello') || lower.contains('hi') || lower.contains('salam')) {
-      return 'Hello! How can I help you?';
-    }
-    return 'Got it! I will get back to you shortly. 👍';
   }
 
   void _scrollToBottom() {
@@ -193,8 +133,26 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  int get _totalUnread =>
-      _conversations.fold(0, (sum, c) => sum + c.unread);
+  int get _totalUnread => _conversations.fold(0, (sum, c) => sum + ((c['unread_count'] as int?) ?? 0));
+
+  String _contactName(Map<String, dynamic> conv) =>
+      conv['contact']?['name'] as String? ?? 'User';
+
+  String _contactInitials(Map<String, dynamic> conv) {
+    final name = _contactName(conv);
+    final parts = name.trim().split(' ');
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  String _listingTitle(Map<String, dynamic> conv) =>
+      conv['listing']?['title'] as String? ?? '';
+
+  bool _isMe(Map<String, dynamic> msg) {
+    final myId = UserState().email;
+    final senderId = msg['sender']?['email'] ?? msg['sender_id'] ?? '';
+    return senderId == myId || msg['_isMe'] == true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -210,7 +168,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildInbox() {
     return Column(
       children: [
-        // Header
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: const BoxDecoration(
@@ -219,9 +176,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           child: Row(
             children: [
-              Text('Inbox',
-                  style: GoogleFonts.syne(
-                      fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+              Text('Inbox', style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
               const SizedBox(width: 8),
               if (_totalUnread > 0)
                 Container(
@@ -231,59 +186,46 @@ class _ChatScreenState extends State<ChatScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text('$_totalUnread unread',
-                      style: GoogleFonts.dmSans(
-                          fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.cyan)),
+                      style: GoogleFonts.dmSans(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.cyan)),
                 ),
             ],
           ),
         ),
         Expanded(
-          child: _conversations.isEmpty
-              ? _buildEmptyInbox()
-              : ListView.builder(
-                  itemCount: _conversations.length,
-                  itemBuilder: (context, i) => _buildConvTile(_conversations[i]),
-                ),
+          child: _loadingConvs
+              ? const Center(child: CircularProgressIndicator(color: AppColors.cyan, strokeWidth: 2))
+              : _conversations.isEmpty
+                  ? _buildEmptyInbox()
+                  : RefreshIndicator(
+                      color: AppColors.cyan,
+                      backgroundColor: AppColors.bgCard,
+                      onRefresh: _loadConversations,
+                      child: ListView.builder(
+                        itemCount: _conversations.length,
+                        itemBuilder: (context, i) => _buildConvTile(_conversations[i]),
+                      ),
+                    ),
         ),
       ],
     );
   }
 
-  Widget _buildConvTile(_Conv c) {
+  Widget _buildConvTile(Map<String, dynamic> c) {
+    final unread = (c['unread_count'] as int?) ?? 0;
+    final lastMsg = c['last_message'] as String? ?? '';
+    final listingTitle = _listingTitle(c);
+
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _activeConv = c;
-          c.unread = 0;
-        });
-        // Scroll to bottom after opening
-        Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
-      },
+      onTap: () => _openConversation(c),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: c.unread > 0 ? AppColors.bgElevated : AppColors.bg,
+          color: unread > 0 ? AppColors.bgElevated : AppColors.bg,
           border: const Border(bottom: BorderSide(color: AppColors.borderLight, width: 0.5)),
         ),
         child: Row(
           children: [
-            Stack(
-              children: [
-                UserAvatar(initials: c.initials, size: 46, colors: c.colors),
-                if (c.isOnline)
-                  Positioned(
-                    right: 0, bottom: 0,
-                    child: Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        color: AppColors.success,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.bg, width: 2),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            UserAvatar(initials: _contactInitials(c), size: 46),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -292,45 +234,36 @@ class _ChatScreenState extends State<ChatScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(c.name,
+                      Text(_contactName(c),
                           style: GoogleFonts.dmSans(
-                            fontSize: 13,
-                            fontWeight: c.unread > 0 ? FontWeight.w700 : FontWeight.w500,
-                            color: AppColors.textPrimary,
-                          )),
-                      Text(_formatTime(c.lastTime),
+                              fontSize: 13,
+                              fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w500,
+                              color: AppColors.textPrimary)),
+                      Text(_formatTime(c['last_message_at'] as String?),
                           style: GoogleFonts.dmSans(
                               fontSize: 10,
-                              color: c.unread > 0 ? AppColors.cyan : AppColors.textMuted)),
+                              color: unread > 0 ? AppColors.cyan : AppColors.textMuted)),
                     ],
                   ),
+                  if (listingTitle.isNotEmpty)
+                    Text('Re: $listingTitle', style: GoogleFonts.dmSans(fontSize: 10, color: AppColors.cyan)),
                   const SizedBox(height: 2),
-                  Text(c.role,
-                      style: GoogleFonts.dmSans(fontSize: 10, color: AppColors.cyan)),
-                  const SizedBox(height: 2),
-                  Text(
-                    c.lastMsg,
-                    style: GoogleFonts.dmSans(
-                      fontSize: 12,
-                      color: c.unread > 0 ? AppColors.textSecondary : AppColors.textMuted,
-                      fontWeight: c.unread > 0 ? FontWeight.w500 : FontWeight.normal,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  Text(lastMsg,
+                      style: GoogleFonts.dmSans(
+                          fontSize: 12,
+                          color: unread > 0 ? AppColors.textSecondary : AppColors.textMuted,
+                          fontWeight: unread > 0 ? FontWeight.w500 : FontWeight.normal),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
-            if (c.unread > 0) ...[
+            if (unread > 0) ...[
               const SizedBox(width: 8),
               Container(
                 width: 20, height: 20,
                 decoration: const BoxDecoration(color: AppColors.cyan, shape: BoxShape.circle),
-                child: Center(
-                  child: Text('${c.unread}',
-                      style: GoogleFonts.dmSans(
-                          fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black)),
-                ),
+                child: Center(child: Text('$unread',
+                    style: GoogleFonts.dmSans(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black))),
               ),
             ],
           ],
@@ -346,12 +279,9 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           const Text('💬', style: TextStyle(fontSize: 48)),
           const SizedBox(height: 12),
-          Text('No messages yet',
-              style: GoogleFonts.syne(
-                  fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Text('No messages yet', style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
           const SizedBox(height: 6),
-          Text('Message a host from any listing',
-              style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)),
+          Text('Message a host from any listing', style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)),
         ],
       ),
     );
@@ -362,7 +292,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final conv = _activeConv!;
     return Column(
       children: [
-        // Chat header
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: const BoxDecoration(
@@ -372,77 +301,38 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Row(
             children: [
               GestureDetector(
-                onTap: () => setState(() => _activeConv = null),
+                onTap: () { setState(() { _activeConv = null; _messages = []; }); _loadConversations(); },
                 child: const AppBackButton(),
               ),
               const SizedBox(width: 10),
-              Stack(
-                children: [
-                  UserAvatar(initials: conv.initials, size: 36, colors: conv.colors),
-                  if (conv.isOnline)
-                    Positioned(
-                      right: 0, bottom: 0,
-                      child: Container(
-                        width: 10, height: 10,
-                        decoration: BoxDecoration(
-                          color: AppColors.success,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.bgElevated, width: 1.5),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              UserAvatar(initials: _contactInitials(conv), size: 36),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(conv.name,
-                        style: GoogleFonts.dmSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary)),
-                    Text(
-                      conv.isOnline ? 'Online now' : conv.role,
-                      style: GoogleFonts.dmSans(
-                          fontSize: 10,
-                          color: conv.isOnline ? AppColors.success : AppColors.textMuted),
-                    ),
+                    Text(_contactName(conv),
+                        style: GoogleFonts.dmSans(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                    if (_listingTitle(conv).isNotEmpty)
+                      Text(_listingTitle(conv), style: GoogleFonts.dmSans(fontSize: 10, color: AppColors.cyan)),
                   ],
                 ),
-              ),
-              // Info button
-              Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                  color: AppColors.bgInput,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.borderLight, width: 0.5),
-                ),
-                child: const Icon(Icons.info_outline, size: 16, color: AppColors.textSecondary),
               ),
             ],
           ),
         ),
-
-        // Messages list
         Expanded(
-          child: ListView.builder(
-            controller: _scrollCtrl,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            itemCount: conv.messages.length + (_isTyping ? 1 : 0),
-            itemBuilder: (context, i) {
-              // Typing indicator
-              if (_isTyping && i == conv.messages.length) {
-                return _buildTypingIndicator(conv);
-              }
-              return _buildBubble(conv.messages[i]);
-            },
-          ),
+          child: _loadingMsgs
+              ? const Center(child: CircularProgressIndicator(color: AppColors.cyan, strokeWidth: 2))
+              : _messages.isEmpty
+                  ? Center(child: Text('No messages yet', style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)))
+                  : ListView.builder(
+                      controller: _scrollCtrl,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, i) => _buildBubble(_messages[i]),
+                    ),
         ),
-
-        // Input bar
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: const BoxDecoration(
@@ -465,7 +355,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     focusNode: _focusNode,
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
                     style: GoogleFonts.dmSans(fontSize: 14, color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       hintText: 'Type a message...',
@@ -483,10 +372,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onTap: _sendMessage,
                 child: Container(
                   width: 40, height: 40,
-                  decoration: const BoxDecoration(
-                    color: AppColors.cyan,
-                    shape: BoxShape.circle,
-                  ),
+                  decoration: const BoxDecoration(color: AppColors.cyan, shape: BoxShape.circle),
                   child: const Icon(Icons.send_rounded, size: 18, color: Colors.black),
                 ),
               ),
@@ -497,8 +383,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildBubble(_Msg m) {
-    final isMe = m.isMe;
+  Widget _buildBubble(Map<String, dynamic> m) {
+    final isMe = _isMe(m);
+    final text = m['message'] as String? ?? '';
+    final time = m['sent_at'] as String?;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -506,20 +395,14 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) ...[
-            UserAvatar(
-              initials: _activeConv!.initials,
-              size: 26,
-              colors: _activeConv!.colors,
-            ),
+            UserAvatar(initials: _contactInitials(_activeConv!), size: 26),
             const SizedBox(width: 6),
           ],
           Column(
             crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               Container(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.65,
-                ),
+                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.65),
                 padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
                 decoration: BoxDecoration(
                   color: isMe ? AppColors.cyan : AppColors.bgCard,
@@ -531,20 +414,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   border: isMe ? null : Border.all(color: AppColors.borderLight, width: 0.5),
                 ),
-                child: Text(
-                  m.text,
-                  style: GoogleFonts.dmSans(
-                    fontSize: 13,
-                    color: isMe ? Colors.black : AppColors.textPrimary,
-                    height: 1.4,
-                  ),
-                ),
+                child: Text(text,
+                    style: GoogleFonts.dmSans(
+                        fontSize: 13,
+                        color: isMe ? Colors.black : AppColors.textPrimary,
+                        height: 1.4)),
               ),
               const SizedBox(height: 3),
-              Text(
-                _formatTime(m.time),
-                style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.textMuted),
-              ),
+              Text(_formatTime(time), style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.textMuted)),
             ],
           ),
         ],
@@ -552,63 +429,16 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildTypingIndicator(_Conv conv) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          UserAvatar(initials: conv.initials, size: 26, colors: conv.colors),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppColors.bgCard,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(14),
-                topRight: Radius.circular(14),
-                bottomRight: Radius.circular(14),
-                bottomLeft: Radius.circular(2),
-              ),
-              border: Border.all(color: AppColors.borderLight, width: 0.5),
-            ),
-            child: Row(
-              children: [
-                _dot(0),
-                const SizedBox(width: 3),
-                _dot(150),
-                const SizedBox(width: 3),
-                _dot(300),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _dot(int delayMs) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.3, end: 1.0),
-      duration: const Duration(milliseconds: 600),
-      curve: Curves.easeInOut,
-      builder: (_, v, __) => Opacity(
-        opacity: v,
-        child: Container(
-          width: 6, height: 6,
-          decoration: const BoxDecoration(
-            color: AppColors.textMuted,
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatTime(DateTime t) {
-    final h = t.hour > 12 ? t.hour - 12 : t.hour == 0 ? 12 : t.hour;
-    final m = t.minute.toString().padLeft(2, '0');
-    final ampm = t.hour >= 12 ? 'PM' : 'AM';
-    return '$h:$m $ampm';
+  String _formatTime(String? iso) {
+    if (iso == null) return '';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final h = dt.hour > 12 ? dt.hour - 12 : dt.hour == 0 ? 12 : dt.hour;
+      final m = dt.minute.toString().padLeft(2, '0');
+      final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+      return '$h:$m $ampm';
+    } catch (_) {
+      return '';
+    }
   }
 }

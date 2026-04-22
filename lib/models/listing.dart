@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
+import '../services/api_client.dart' show StorageHelper;
 
 class Listing {
   final String id;
@@ -57,7 +58,6 @@ class Listing {
     final hostInitials = _initials(hostName);
     final avgRating = (json['avg_rating'] ?? json['rating'] ?? 0).toDouble();
     final reviewCount = (json['review_count'] ?? json['reviews_count'] ?? 0) as int;
-    final images = (json['images'] as List?)?.cast<String>() ?? [];
     final isFeatured = json['is_featured'] == true || json['is_featured'] == 1;
 
     return Listing(
@@ -77,7 +77,7 @@ class Listing {
       hostId: host?['id']?.toString(),
       amenities: (json['amenities'] as List?)?.cast<String>() ?? [],
       description: json['description'] as String? ?? '',
-      photoUrls: images,
+      photoUrls: StorageHelper.urls(json['images'] as List?),
       isFeatured: isFeatured,
       status: json['status'] as String? ?? 'active',
     );

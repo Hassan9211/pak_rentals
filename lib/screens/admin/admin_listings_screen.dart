@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../services/api_client.dart';
 import '../../widgets/admin_nav.dart';
 
 class AdminListingsScreen extends StatefulWidget {
@@ -11,188 +12,90 @@ class AdminListingsScreen extends StatefulWidget {
 }
 
 class _AdminListingsScreenState extends State<AdminListingsScreen> {
-  int _tab = 0; // 0=Pending, 1=Approved, 2=Rejected
+  List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _moderated = [];
+  int _tab = 0; // 0=Pending, 1=Approved/Rejected
+  bool _loading = true;
 
-  final List<Map<String, dynamic>> _pending = [
-    {
-      'emoji': '🏠',
-      'bg': const Color(0xFF0D1F1A),
-      'title': '3-Bed House – Satellite Town',
-      'sub': '📍 Bahawalpur · PKR 22,000/mo · by Zara Abbasi',
-    },
-    {
-      'emoji': '🚗',
-      'bg': const Color(0xFF0D1520),
-      'title': 'Toyota Corolla 2022 – Daily',
-      'sub': '📍 Lahore · PKR 8,000/day · by Usman Malik',
-    },
-    {
-      'emoji': '👗',
-      'bg': const Color(0xFF1A0D14),
-      'title': 'Bridal Sherwani – Premium Set',
-      'sub': '📍 Karachi · PKR 20,000/event · by Fatima Bibi',
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await AdminApi.getListings();
+      final data = res['data'] as Map<String, dynamic>? ?? {};
+      if (mounted) {
+        setState(() {
+          _pending = (data['pending'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          _moderated = (data['moderated'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _approve(String id) async {
+    try {
+      await AdminApi.approveListing(id);
+      _load();
+    } catch (_) {}
+  }
+
+  Future<void> _reject(String id) async {
+    try {
+      await AdminApi.rejectListing(id);
+      _load();
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
+    final list = _tab == 0 ? _pending : _moderated;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
         child: Column(
           children: [
-            const AdminHeader(
-                rightText: '12 pending', rightColor: AppColors.warning),
+            AdminHeader(rightText: '${_pending.length} pending', rightColor: AppColors.warning),
             const AdminTopNav(currentIndex: 2),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Tab row
-                    Row(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.purple, strokeWidth: 2))
+                  : Column(
                       children: [
-                        _tabBtn(0, '📋 Pending (12)', AppColors.warning),
-                        const SizedBox(width: 5),
-                        _tabBtn(1, '✅ Approved', AppColors.success),
-                        const SizedBox(width: 5),
-                        _tabBtn(2, '❌ Rejected', AppColors.error),
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              _tabBtn(0, '📋 Pending (${_pending.length})', AppColors.warning),
+                              const SizedBox(width: 6),
+                              _tabBtn(1, '✅ Reviewed', AppColors.success),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: RefreshIndicator(
+                            color: AppColors.purple,
+                            backgroundColor: AppColors.bgCard,
+                            onRefresh: _load,
+                            child: list.isEmpty
+                                ? Center(child: Text('No listings', style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)))
+                                : ListView.builder(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    itemCount: list.length,
+                                    itemBuilder: (context, i) => _listingCard(list[i]),
+                                  ),
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _sectionLabel('Pending Approval'),
-                    const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: Column(
-                        children: _pending.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final l = entry.value;
-                          final isLast = i == _pending.length - 1;
-                          return Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              border: isLast
-                                  ? null
-                                  : const Border(
-                                      bottom: BorderSide(
-                                          color: AppColors.borderLight,
-                                          width: 0.5)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: l['bg'] as Color,
-                                        borderRadius:
-                                            BorderRadius.circular(7),
-                                      ),
-                                      child: Center(
-                                        child: Text(l['emoji'] as String,
-                                            style: const TextStyle(
-                                                fontSize: 20)),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(l['title'] as String,
-                                              style: GoogleFonts.dmSans(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
-                                                color: AppColors.textPrimary,
-                                              )),
-                                          Text(l['sub'] as String,
-                                              style: GoogleFonts.dmSans(
-                                                  fontSize: 9,
-                                                  color:
-                                                      AppColors.textMuted)),
-                                        ],
-                                      ),
-                                    ),
-                                    _badge('PENDING', AppColors.warning),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    _actionBtn('✓ Approve', AppColors.success),
-                                    const SizedBox(width: 6),
-                                    _actionBtn('✗ Reject', AppColors.error),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _sectionLabel('Recently Approved'),
-                    const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0D1F1A),
-                                borderRadius: BorderRadius.circular(7),
-                              ),
-                              child: const Center(
-                                  child: Text('🏠',
-                                      style: TextStyle(fontSize: 20))),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('Stunning 3 bedrooms',
-                                      style: GoogleFonts.dmSans(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w500,
-                                        color: AppColors.textPrimary,
-                                      )),
-                                  Text('📍 Bahawalpur · PKR 5,000/day',
-                                      style: GoogleFonts.dmSans(
-                                          fontSize: 9,
-                                          color: AppColors.textMuted)),
-                                ],
-                              ),
-                            ),
-                            _badge('Approved', AppColors.success),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
             const AdminBottomNav(currentIndex: 1),
           ],
@@ -207,70 +110,98 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
       child: GestureDetector(
         onTap: () => setState(() => _tab = index),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 7),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           decoration: BoxDecoration(
-            color: isActive ? color.withOpacity(0.08) : AppColors.bgCard,
+            color: isActive ? color.withValues(alpha: 0.08) : AppColors.bgCard,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isActive ? color.withOpacity(0.3) : AppColors.borderLight,
-              width: 0.5,
-            ),
+            border: Border.all(color: isActive ? color.withValues(alpha: 0.3) : AppColors.borderLight, width: 0.5),
           ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.dmSans(
-              fontSize: 9,
-              color: isActive ? color : AppColors.textMuted,
-              fontWeight:
-                  isActive ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
+          child: Center(child: Text(label,
+              style: GoogleFonts.dmSans(fontSize: 10, color: isActive ? color : AppColors.textMuted,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.normal))),
         ),
       ),
     );
   }
 
-  Widget _sectionLabel(String label) {
-    return Text(
-      label.toUpperCase(),
-      style: GoogleFonts.dmSans(
-        fontSize: 9,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textMuted,
-        letterSpacing: 0.8,
+  Widget _listingCard(Map<String, dynamic> l) {
+    final id = l['id'].toString();
+    final title = l['title'] as String? ?? 'Listing';
+    final host = l['host'] as Map<String, dynamic>?;
+    final hostName = host?['name'] as String? ?? 'Host';
+    final city = l['location_city'] as String? ?? '';
+    final price = l['price_per_day']?.toString() ?? '0';
+    final status = l['status'] as String? ?? 'pending';
+    final isPending = status == 'pending';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.borderLight, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(color: AppColors.bgInput, borderRadius: BorderRadius.circular(7)),
+                child: const Center(child: Text('🏠', style: TextStyle(fontSize: 20))),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: GoogleFonts.dmSans(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                    Text('📍 $city · PKR $price/day · by $hostName',
+                        style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.textMuted)),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (isPending ? AppColors.warning : status == 'approved' ? AppColors.success : AppColors.error).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(status.toUpperCase(),
+                    style: GoogleFonts.dmSans(fontSize: 8, fontWeight: FontWeight.w700,
+                        color: isPending ? AppColors.warning : status == 'approved' ? AppColors.success : AppColors.error)),
+              ),
+            ],
+          ),
+          if (isPending) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _actionBtn('✓ Approve', AppColors.success, () => _approve(id)),
+                const SizedBox(width: 6),
+                _actionBtn('✗ Reject', AppColors.error, () => _reject(id)),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
 
-  Widget _badge(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.25), width: 0.5),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.dmSans(
-            fontSize: 8, fontWeight: FontWeight.w700, color: color),
-      ),
-    );
-  }
-
-  Widget _actionBtn(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withOpacity(0.3), width: 0.5),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.dmSans(
-            fontSize: 9, fontWeight: FontWeight.w600, color: color),
+  Widget _actionBtn(String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+        ),
+        child: Text(label, style: GoogleFonts.dmSans(fontSize: 9, fontWeight: FontWeight.w600, color: color)),
       ),
     );
   }

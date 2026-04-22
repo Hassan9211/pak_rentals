@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
 import '../models/listing.dart';
 import '../models/category.dart';
+import '../services/api_client.dart';
 import '../widgets/common/app_bottom_nav.dart';
 import '../widgets/listing_card.dart';
 import '../widgets/category_card.dart';
@@ -17,6 +18,58 @@ class BrowseScreen extends StatefulWidget {
 class _BrowseScreenState extends State<BrowseScreen> {
   int _selectedCat = 0;
   bool _isGrid = false;
+  List<Category> _categories = [];
+  List<Listing> _listings = [];
+  int _total = 0;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+    _loadListings();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final res = await CategoriesApi.getAll();
+      final list = res['data'] as List? ?? [];
+      if (mounted) {
+        setState(() {
+          _categories = list.map((e) {
+            final m = e as Map<String, dynamic>;
+            return Category(
+              id: m['id'].toString(),
+              name: m['name'] as String? ?? '',
+              slug: m['slug'] as String? ?? '',
+              icon: m['icon'] as String? ?? '📦',
+            );
+          }).toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadListings() async {
+    setState(() => _loading = true);
+    try {
+      final category = _selectedCat > 0 && _selectedCat < _categories.length
+          ? _categories[_selectedCat].slug
+          : null;
+      final res = await ListingsApi.getAll(category: category);
+      final list = res['data'] as List? ?? [];
+      final meta = res['meta'] as Map<String, dynamic>? ?? {};
+      if (mounted) {
+        setState(() {
+          _listings = list.map((e) => Listing.fromJson(e as Map<String, dynamic>)).toList();
+          _total = meta['total'] as int? ?? _listings.length;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,10 +79,19 @@ class _BrowseScreenState extends State<BrowseScreen> {
         child: Column(
           children: [
             _buildHeader(),
-            _buildCategories(),
+            if (_categories.isNotEmpty) _buildCategories(),
             _buildResultsBar(),
             Expanded(
-              child: _isGrid ? _buildGrid() : _buildList(),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.cyan, strokeWidth: 2))
+                  : _listings.isEmpty
+                      ? Center(child: Text('No listings', style: GoogleFonts.dmSans(fontSize: 13, color: AppColors.textMuted)))
+                      : RefreshIndicator(
+                          color: AppColors.cyan,
+                          backgroundColor: AppColors.bgCard,
+                          onRefresh: _loadListings,
+                          child: _isGrid ? _buildGrid() : _buildList(),
+                        ),
             ),
             AppBottomNav(currentIndex: 1),
           ],
@@ -61,19 +123,22 @@ class _BrowseScreenState extends State<BrowseScreen> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.bgInput,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.borderLight, width: 0.5),
-              ),
-              child: Row(
-                children: [
-                  const Text('🔍', style: TextStyle(fontSize: 14)),
-                  const SizedBox(width: 8),
-                  Text('Search listings...', style: GoogleFonts.dmSans(fontSize: 12, color: AppColors.textMuted)),
-                ],
+            child: GestureDetector(
+              onTap: () => Navigator.pushNamed(context, '/search'),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.bgInput,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.borderLight, width: 0.5),
+                ),
+                child: Row(
+                  children: [
+                    const Text('🔍', style: TextStyle(fontSize: 14)),
+                    const SizedBox(width: 8),
+                    Text('Search listings...', style: GoogleFonts.dmSans(fontSize: 12, color: AppColors.textMuted)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -87,24 +152,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.borderLight, width: 0.5),
               ),
-              child: Center(
-                child: Icon(
-                  _isGrid ? Icons.list : Icons.grid_view,
-                  size: 18,
-                  color: AppColors.textSecondary,
-                ),
-              ),
+              child: Center(child: Icon(_isGrid ? Icons.list : Icons.grid_view, size: 18, color: AppColors.textSecondary)),
             ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.cyan.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.cyan.withValues(alpha: 0.2), width: 0.5),
-            ),
-            child: const Center(child: Text('⚙️', style: TextStyle(fontSize: 15))),
           ),
         ],
       ),
@@ -122,17 +171,25 @@ class _BrowseScreenState extends State<BrowseScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Row(
-          children: SampleCategories.all.asMap().entries.map((entry) {
-            final i = entry.key;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: CategoryCard(
-                category: entry.value,
-                isSelected: i == _selectedCat,
-                onTap: () => setState(() => _selectedCat = i),
-              ),
-            );
-          }).toList(),
+          children: [
+            CategoryCard(
+              category: const Category(id: '0', name: 'All', slug: '', icon: '📦'),
+              isSelected: _selectedCat == 0,
+              onTap: () { setState(() => _selectedCat = 0); _loadListings(); },
+            ),
+            const SizedBox(width: 8),
+            ..._categories.asMap().entries.map((entry) {
+              final i = entry.key + 1;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: CategoryCard(
+                  category: entry.value,
+                  isSelected: i == _selectedCat,
+                  onTap: () { setState(() => _selectedCat = i); _loadListings(); },
+                ),
+              );
+            }),
+          ],
         ),
       ),
     );
@@ -145,7 +202,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('128 listings found · Bahawalpur',
+          Text('$_total listings found',
               style: GoogleFonts.dmSans(fontSize: 11, color: AppColors.textMuted)),
           Row(
             children: [
@@ -162,10 +219,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
   Widget _buildList() {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: SampleData.searchResults.length,
+      itemCount: _listings.length,
       itemBuilder: (context, i) => ListingListItem(
-        listing: SampleData.searchResults[i],
-        onTap: () => Navigator.pushNamed(context, '/listing-detail'),
+        listing: _listings[i],
+        onTap: () => Navigator.pushNamed(context, '/listing-detail', arguments: _listings[i]),
       ),
     );
   }
@@ -179,10 +236,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
         mainAxisSpacing: 10,
         childAspectRatio: 0.72,
       ),
-      itemCount: SampleData.searchResults.length,
+      itemCount: _listings.length,
       itemBuilder: (context, i) => ListingCard(
-        listing: SampleData.searchResults[i],
-        onTap: () => Navigator.pushNamed(context, '/listing-detail'),
+        listing: _listings[i],
+        onTap: () => Navigator.pushNamed(context, '/listing-detail', arguments: _listings[i]),
       ),
     );
   }

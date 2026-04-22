@@ -4,9 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../core/theme.dart';
-import '../../models/category.dart';
-import '../../services/listing_state.dart';
-import '../../services/user_state.dart';
+import '../../services/api_client.dart';
 import '../../widgets/common/gradient_button.dart';
 
 class CreateListingScreen extends StatefulWidget {
@@ -20,6 +18,10 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   int _step = 0;
   int _selectedCat = 0;
   String _priceUnit = '/day';
+
+  // Categories from API
+  List<Map<String, dynamic>> _categories = [];
+  bool _catsLoading = true;
 
   // Step 0 controllers
   final _titleCtrl = TextEditingController();
@@ -60,6 +62,22 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     _depositCtrl.dispose();
     _minPeriodCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final res = await CategoriesApi.getAll();
+      final list = (res['data'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      if (mounted) setState(() { _categories = list; _catsLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _catsLoading = false);
+    }
   }
 
   // ── Validation ──
@@ -111,28 +129,37 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     setState(() => _step++);
   }
 
-  void _submitListing() {
-    final category = SampleCategories.all[_selectedCat].name;
-    final user = UserState();
+  void _submitListing() async {
+    setState(() => _loading = true);
+    try {
+      final categoryId = _categories.isNotEmpty && _selectedCat < _categories.length
+          ? _categories[_selectedCat]['id'].toString()
+          : '1';
 
-    ListingState().addListing(
-      title: _titleCtrl.text.trim(),
-      location: _locationCtrl.text.trim(),
-      price: _priceCtrl.text.trim(),
-      priceUnit: _priceUnit,
-      category: category,
-      hostName: user.name,
-      hostInitials: user.initials,
-      description: _descCtrl.text.trim(),
-      amenities: _selectedAmenities.toList(),
-      firstPhotoPath: _photos.isNotEmpty ? _photos.first.path : null,
-    );
+      await ListingsApi.create(
+        title: _titleCtrl.text.trim(),
+        description: _descCtrl.text.trim(),
+        categoryId: categoryId,
+        pricePerDay: double.tryParse(_priceCtrl.text.trim()) ?? 0,
+        locationCity: _locationCtrl.text.trim(),
+        images: _photos.map((x) => File(x.path)).toList(),
+      );
 
-    _showSnack('Listing submitted for review! ✅');
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) Navigator.pop(context);
-    });
+      if (!mounted) return;
+      _showSnack('Listing submitted for review! ✅');
+      Navigator.pop(context);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _showSnack(e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _showSnack('Failed to submit. Check your connection.');
+    }
   }
+
+  bool _loading = false;
 
   Future<void> _pickImage(ImageSource source) async {
     if (_photos.length >= _maxPhotos) {
@@ -516,7 +543,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           crossAxisSpacing: 8,
           mainAxisSpacing: 8,
           childAspectRatio: 1.4,
-          children: SampleCategories.all.asMap().entries.map((entry) {
+          children: _catsLoading
+              ? [const Center(child: CircularProgressIndicator(color: AppColors.cyan, strokeWidth: 2))]
+              : _categories.asMap().entries.map((entry) {
             final i = entry.key;
             final cat = entry.value;
             final isSelected = i == _selectedCat;
@@ -534,9 +563,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(cat.icon, style: const TextStyle(fontSize: 22)),
+                    Text(cat['icon'] as String? ?? '📦', style: const TextStyle(fontSize: 22)),
                     const SizedBox(height: 4),
-                    Text(cat.name,
+                    Text(cat['name'] as String? ?? '',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.dmSans(
                           fontSize: 10,
@@ -957,8 +986,12 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           Expanded(
             flex: 2,
             child: GradientButton(
-              label: _step < 2 ? 'Continue' : 'Submit for Review',
-              onTap: _onContinue,
+              label: _step < 2
+                  ? 'Continue'
+                  : _loading
+                      ? 'Submitting...'
+                      : 'Submit for Review',
+              onTap: _loading ? null : _onContinue,
             ),
           ),
         ],

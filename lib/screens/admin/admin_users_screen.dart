@@ -1,270 +1,82 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../services/api_client.dart';
 import '../../widgets/admin_nav.dart';
 import '../../widgets/common_widgets.dart';
 
-class AdminUsersScreen extends StatelessWidget {
+class AdminUsersScreen extends StatefulWidget {
   const AdminUsersScreen({super.key});
 
   @override
+  State<AdminUsersScreen> createState() => _AdminUsersScreenState();
+}
+
+class _AdminUsersScreenState extends State<AdminUsersScreen> {
+  List<Map<String, dynamic>> _users = [];
+  int _total = 0;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await AdminApi.getUsers();
+      final list = res['data'] as List? ?? [];
+      final meta = res['meta'] as Map<String, dynamic>? ?? {};
+      if (mounted) {
+        setState(() {
+          _users = list.cast<Map<String, dynamic>>();
+          _total = meta['total'] as int? ?? _users.length;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggleVerify(String userId) async {
+    try {
+      await AdminApi.toggleVerify(userId);
+      _load();
+    } catch (_) {}
+  }
+
+  Future<void> _toggleSuspend(String userId) async {
+    try {
+      await AdminApi.toggleSuspend(userId);
+      _load();
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final recentUsers = [
-      {
-        'initials': 'MZ',
-        'colors': [AppColors.cyan, AppColors.purple],
-        'name': 'Muhammad Zohaib',
-        'sub': 'zohabanwr63@gmail.com · Host',
-        'badges': [
-          {'label': 'Active', 'color': AppColors.success},
-          {'label': 'Unverified', 'color': AppColors.warning},
-        ],
-      },
-      {
-        'initials': 'AK',
-        'colors': [AppColors.cyan, AppColors.success],
-        'name': 'Ahmed Khan',
-        'sub': 'ahmed.k@gmail.com · Host+Renter',
-        'badges': [
-          {'label': 'Active', 'color': AppColors.success},
-          {'label': 'CNIC ✓', 'color': AppColors.success},
-        ],
-      },
-      {
-        'initials': 'FB',
-        'colors': [AppColors.pink, AppColors.purple],
-        'name': 'Fatima Bibi',
-        'sub': 'f.bibi92@yahoo.com · Renter',
-        'badges': [
-          {'label': 'Active', 'color': AppColors.success},
-          {'label': 'Unverified', 'color': AppColors.warning},
-        ],
-      },
-      {
-        'initials': 'TE',
-        'colors': [AppColors.purple, AppColors.pink],
-        'name': 'Test Admin',
-        'sub': 'admin@pakrentals.pk',
-        'badges': [
-          {'label': 'Admin', 'color': AppColors.purple},
-        ],
-      },
-    ];
-
-    final pendingUsers = [
-      {
-        'initials': 'ZA',
-        'colors': [AppColors.warning, AppColors.pink],
-        'name': 'Zara Abbasi',
-        'sub': 'CNIC uploaded · Awaiting review',
-      },
-      {
-        'initials': 'UM',
-        'colors': [const Color(0xFF378ADD), AppColors.cyan],
-        'name': 'Usman Malik',
-        'sub': 'CNIC uploaded · Awaiting review',
-      },
-    ];
-
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
         child: Column(
           children: [
-            const AdminHeader(
-                rightText: '1,840 users', rightColor: AppColors.cyan),
+            AdminHeader(rightText: '$_total users', rightColor: AppColors.cyan),
             const AdminTopNav(currentIndex: 1),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Search row
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: AppColors.bgCard,
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                  color: AppColors.borderLight, width: 0.5),
-                            ),
-                            child: Text('🔍 Search users...',
-                                style: GoogleFonts.dmSans(
-                                    fontSize: 10,
-                                    color: AppColors.textMuted)),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: AppColors.purple.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                                color: AppColors.purple.withOpacity(0.3),
-                                width: 0.5),
-                          ),
-                          child: Text('Filter',
-                              style: GoogleFonts.dmSans(
-                                  fontSize: 10, color: AppColors.purple)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _sectionLabel('Recent Users'),
-                    const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: Column(
-                        children: recentUsers.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final u = entry.value;
-                          final isLast = i == recentUsers.length - 1;
-                          return Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              border: isLast
-                                  ? null
-                                  : const Border(
-                                      bottom: BorderSide(
-                                          color: AppColors.borderLight,
-                                          width: 0.5)),
-                            ),
-                            child: Row(
-                              children: [
-                                UserAvatar(
-                                  initials: u['initials'] as String,
-                                  size: 32,
-                                  colors: (u['colors'] as List)
-                                      .cast<Color>(),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(u['name'] as String,
-                                          style: GoogleFonts.dmSans(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w500,
-                                            color: AppColors.textPrimary,
-                                          )),
-                                      Text(u['sub'] as String,
-                                          style: GoogleFonts.dmSans(
-                                              fontSize: 9,
-                                              color: AppColors.textMuted)),
-                                    ],
-                                  ),
-                                ),
-                                Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.end,
-                                  children: (u['badges']
-                                          as List<Map<String, dynamic>>)
-                                      .map((b) => Padding(
-                                            padding: const EdgeInsets.only(
-                                                bottom: 3),
-                                            child: StatusBadge(
-                                              label: b['label'] as String,
-                                              color: b['color'] as Color,
-                                            ),
-                                          ))
-                                      .toList(),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.purple, strokeWidth: 2))
+                  : RefreshIndicator(
+                      color: AppColors.purple,
+                      backgroundColor: AppColors.bgCard,
+                      onRefresh: _load,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _users.length,
+                        itemBuilder: (context, i) => _userCard(_users[i]),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        _sectionLabel('Unverified Users'),
-                        const SizedBox(width: 6),
-                        Text('(3 pending CNIC)',
-                            style: GoogleFonts.dmSans(
-                                fontSize: 9, color: AppColors.warning)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.borderLight, width: 0.5),
-                      ),
-                      child: Column(
-                        children: pendingUsers.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final u = entry.value;
-                          final isLast = i == pendingUsers.length - 1;
-                          return Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              border: isLast
-                                  ? null
-                                  : const Border(
-                                      bottom: BorderSide(
-                                          color: AppColors.borderLight,
-                                          width: 0.5)),
-                            ),
-                            child: Row(
-                              children: [
-                                UserAvatar(
-                                  initials: u['initials'] as String,
-                                  size: 32,
-                                  colors: (u['colors'] as List)
-                                      .cast<Color>(),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(u['name'] as String,
-                                          style: GoogleFonts.dmSans(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w500,
-                                            color: AppColors.textPrimary,
-                                          )),
-                                      Text(u['sub'] as String,
-                                          style: GoogleFonts.dmSans(
-                                              fontSize: 9,
-                                              color: AppColors.textMuted)),
-                                    ],
-                                  ),
-                                ),
-                                Row(
-                                  children: [
-                                    _actionBtn('Verify', AppColors.success),
-                                    const SizedBox(width: 5),
-                                    _actionBtn('Reject', AppColors.error),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
             const AdminBottomNav(currentIndex: 1),
           ],
@@ -273,30 +85,72 @@ class AdminUsersScreen extends StatelessWidget {
     );
   }
 
-  Widget _sectionLabel(String label) {
-    return Text(
-      label.toUpperCase(),
-      style: GoogleFonts.dmSans(
-        fontSize: 9,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textMuted,
-        letterSpacing: 0.8,
+  Widget _userCard(Map<String, dynamic> u) {
+    final name = u['name'] as String? ?? 'User';
+    final email = u['email'] as String? ?? '';
+    final verified = u['verified_at'] != null;
+    final roles = (u['roles'] as List?)?.map((r) => r['name'] as String? ?? '').toList() ?? ['user'];
+    final role = roles.isNotEmpty ? roles.first : 'user';
+    final initials = name.trim().split(' ').map((p) => p.isNotEmpty ? p[0] : '').take(2).join().toUpperCase();
+    final id = u['id'].toString();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.borderLight, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          UserAvatar(initials: initials, size: 36),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: GoogleFonts.dmSans(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                Text(email, style: GoogleFonts.dmSans(fontSize: 10, color: AppColors.textMuted)),
+                Text(role, style: GoogleFonts.dmSans(fontSize: 9, color: AppColors.purple)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              StatusBadge(
+                label: verified ? 'Verified' : 'Unverified',
+                color: verified ? AppColors.success : AppColors.warning,
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  _actionBtn(verified ? 'Unverify' : 'Verify',
+                      verified ? AppColors.warning : AppColors.success,
+                      () => _toggleVerify(id)),
+                  const SizedBox(width: 4),
+                  _actionBtn('Suspend', AppColors.error, () => _toggleSuspend(id)),
+                ],
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _actionBtn(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withOpacity(0.3), width: 0.5),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.dmSans(
-            fontSize: 9, fontWeight: FontWeight.w600, color: color),
+  Widget _actionBtn(String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+        ),
+        child: Text(label, style: GoogleFonts.dmSans(fontSize: 8, fontWeight: FontWeight.w600, color: color)),
       ),
     );
   }

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../services/api_client.dart';
+import '../../services/user_state.dart';
 import '../../widgets/common/app_logo.dart';
 import '../../widgets/common/gradient_button.dart';
-
-import '../../services/user_state.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,33 +30,56 @@ class _LoginScreenState extends State<LoginScreen> {
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!mounted) return;
 
-    final email = _emailCtrl.text.trim();
+    try {
+      // ── Call real backend API ──
+      final res = await AuthApi.login(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text.trim(),
+      );
 
-    // Admin login — special email sets admin role
-    final isAdmin = email == 'admin@pakrentals.pk' ||
-        email.toLowerCase().contains('admin');
+      if (!mounted) return;
 
-    final name = email.contains('@')
-        ? email.split('@')[0].replaceAll(RegExp(r'[._]'), ' ').trim()
-        : email;
+      // Extract user from response
+      final user = AuthApi.extractUser(res);
+      final name = user?['name'] as String? ?? _emailCtrl.text.trim();
+      final email = user?['email'] as String? ?? _emailCtrl.text.trim();
+      final phone = user?['phone'] as String? ?? '';
+      final roles = user?['roles'] as List?;
+      final role = roles?.isNotEmpty == true
+          ? (roles!.first['name'] as String? ?? 'user')
+          : 'user';
 
-    await UserState().setUser(
-      name: _capitalize(isAdmin ? 'Admin User' : name),
-      email: email,
-      phone: '',
-      role: isAdmin ? 'admin' : 'renter',
-    );
+      // Save to local state
+      await UserState().setUser(
+        name: name,
+        email: email,
+        phone: phone,
+        role: role,
+      );
 
-    setState(() => _loading = false);
-    Navigator.pushReplacementNamed(context, '/home');
+      setState(() => _loading = false);
+      Navigator.pushReplacementNamed(context, '/home');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      final emailErr = e.fieldError('email');
+      _showError(emailErr ?? e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _showError('Connection failed. Check your internet and try again.');
+    }
   }
 
-  String _capitalize(String s) {
-    if (s.isEmpty) return s;
-    return s.split(' ').map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: GoogleFonts.dmSans(fontSize: 13, color: Colors.white)),
+      backgroundColor: AppColors.error,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      margin: const EdgeInsets.all(16),
+    ));
   }
 
   @override
